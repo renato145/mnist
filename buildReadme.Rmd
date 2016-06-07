@@ -1,0 +1,125 @@
+---
+title: "MNIST Digit Classification"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(flexdashboard)
+library(ggplot2)
+library(dplyr)
+library(reshape2)
+library(scales)
+
+svm.time <- read.csv("svmTime.txt", header = F)
+randomForest.time <- read.csv("randomForestTime.txt", header = F)
+mlp.time <- read.csv("mlpTime.txt", header = F)
+knn.1.time <- read.csv("knnWithoutPreprocess.txt", header = F)
+knn.2.time <- read.csv("knnWithPreprocessAndWeights.txt", header = F)
+
+df.times <- data.frame(classifier = c("SVM", "Random Forest", "MLP", "knn", "knn+pca+w"), 
+                       time = c(svm.time$V1, randomForest.time$V1, mlp.time$V1, knn.1.time$V1, knn.2.time$V1))
+df.times.predict <- df.times
+df.times.predict$time <- c(28.27, 0.44, 0.18, 565.82, 35.22)
+getDf <- function(cm, classifier) {
+    cm <- cm[, 2:11]
+    correct <- c()
+    errors <- c()
+    for (i in 1:10) {
+        correct <- c(correct, cm[i, i])
+        errors <- c(errors, sum(cm[i, -i]))
+    }
+    data.frame(classifier, digits = 0:9, correct, errors)
+}
+
+randomForest.cm <- read.csv("randomForest.csv")
+df <- getDf(randomForest.cm, "Random Forest")
+
+svm.cm <- read.csv("svm.csv")
+df <- rbind(df, getDf(svm.cm, "SVM"))
+
+mlp.cm <- read.csv("mlp.csv")
+df <- rbind(df, getDf(mlp.cm, "MLP"))
+
+knn.1.cm <- read.csv("knnWithoutPreprocess.csv")
+df <- rbind(df, getDf(knn.1.cm, "knn"))
+
+knn.2.cm <- read.csv("knnWithPreprocessAndWeights.csv")
+df <- rbind(df, getDf(knn.2.cm, "knn+pca+w"))
+
+df <- melt(df, id.vars = c("classifier", "digits"))
+df$digits <- factor(df$digits)
+acc <- df %>% group_by(classifier, variable) %>% summarise(sum(value)) %>% dcast(classifier~variable)
+acc$accuracy <- acc$correct / (acc$correct + acc$errors)
+```
+
+### Fit & predict times:
+
+```{r times, echo=FALSE}
+ggplot(df.times, aes(classifier, time)) + geom_bar(stat = "identity", aes(fill=classifier)) +
+    geom_text(aes(y=0, label=round(time, 2)), vjust=-0.5, size = 10, color = "black") +
+    labs(x="", y="seconds", title="Fit Time") + theme_bw() + theme(legend.position = "none") + 
+    scale_fill_brewer(palette = "Set2") + 
+    theme(axis.text = element_text(size = 15), axis.title.y = element_text(size = 16))
+
+ggplot(df.times.predict, aes(classifier, time)) + geom_bar(stat = "identity", aes(fill=classifier)) +
+    geom_text(aes(y=0, label=round(time, 2)), vjust=-0.5, size = 10, color = "black") +
+    labs(x="", y="seconds", title="Predict Time") + theme_bw() + theme(legend.position = "none") + 
+    scale_fill_brewer(palette = "Set2") + 
+    theme(axis.text = element_text(size = 15), axis.title.y = element_text(size = 16))
+```
+
+
+### Accuracy
+
+```{r accuracy, echo=FALSE, fig.width=8}
+ggplot(acc, aes(classifier, accuracy)) + geom_bar(stat = "identity", aes(fill=classifier), position = "dodge") + 
+    geom_text(aes(y=.9, label=round(accuracy, 2)), vjust=-0.5, size = 10, color = "white") +
+    labs(x="", y="Accuracy", title="Classifiers accuracy") + theme_bw() + theme(legend.position = "none") + 
+    scale_y_continuous(limits = c(.9, 1), oob = rescale_none) + scale_fill_brewer("", palette = "Set2") + 
+    theme(axis.text = element_text(size = 15), axis.title.y = element_text(size = 20))
+```
+
+```{r, echo=FALSE, fig.width=10}
+ggplot(df[df$variable == "correct" & df$classifier != "knn", ], aes(digits, value)) + geom_bar(stat = "identity", aes(fill=classifier), position = "dodge") + 
+    labs(x="", y="", title="Correct predictions") + theme_bw() + 
+    scale_fill_brewer("", palette = "Set2") +
+    theme(legend.position = "bottom", legend.direction = "horizontal", axis.text = element_text(size = 25),
+          legend.text = element_text(size = 20))
+```
+
+```{r, echo=FALSE, fig.width=10}
+ggplot(df[df$variable == "errors" & df$classifier != "knn", ], aes(digits, value)) + geom_bar(stat = "identity", aes(fill=classifier), position = "dodge") + 
+    labs(x="", y="", title="Errors on predictions") + theme_bw() + 
+    scale_fill_brewer("", palette = "Set2") +
+    theme(legend.position = "bottom", legend.direction = "horizontal", axis.text = element_text(size = 25),
+          legend.text = element_text(size = 20))
+```
+
+### Classifiers digit errors
+
+```{r, echo=FALSE, fig.height=7, fig.width=6}
+comp <- data.frame(classifier = rep(c("RF", "SVM", "MLP", "KNN"), each=100),
+                   digit = rep(rep(0:9, each=10), 40), error = rep(0:9, 400)) %>% tbl_df
+comp <- comp %>% filter(digit != error)
+comp$n <- 0
+for (i in 1:nrow(comp)) {
+    if (comp$classifier[i] == "RF") {
+        temp = randomForest.cmtemp = randomForest.cm
+    } else if (comp$classifier[i] == "SVM") {
+        temp = svm.cm
+    } else if (comp$classifier[i] == "MLP") {
+        temp = mlp.cm
+    } else {
+        temp = knn.2.cm
+    }
+    comp$n[i] <- temp[comp$digit[i]+1, comp$error[i]+2]
+}
+
+ggplot(comp, aes(error, n)) +
+    geom_bar(stat = "identity", aes(fill = n)) +
+    facet_grid(digit~classifier) + labs(x="", y="") +
+    scale_x_continuous(breaks = 0:9) + theme_bw() + theme(legend.position = "none") +labs(x = NULL, y = NULL)
+
+```
+
